@@ -30,6 +30,9 @@ class HUB8DMAClass{
 
     public:
 
+        void fillframe(uint8_t frame, uint8_t (&buffer)[]); // transfer data from buffer into frame
+        void fillframe(uint8_t frame, uint8_t &buffer, int column); // transfer data from buffer from specified column into frame
+       
         static HUB8DMAClass *HUB8Ptr;    // pointer to instance
         static void callback_wrapper(Adafruit_ZeroDMA *dma); 
         void dma_callback(); 
@@ -39,9 +42,7 @@ class HUB8DMAClass{
         void begin();               // begin class - includes initialisation of DMA
         uint8_t liveframe;          // index of frame to be displayed
 
-        void fillframe(uint8_t frame, uint8_t buffer); // transfer data from buffer into frame
-        void fillframe(uint8_t frame, uint8_t buffer, int column); // transfer data from buffer from specified column into frame
-        
+ 
 };
 
 

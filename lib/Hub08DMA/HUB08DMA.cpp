@@ -2,12 +2,6 @@
 #include <Adafruit_ZeroDMA.h>
 #include "wiring_private.h"
 #include <HUB08DMA.h>
-//#include <functional>
-
-// Adafruit_ZeroDMA DMA;
-// ZeroDMAstatus    status;
-// DmacDescriptor   *DMACDesc;
-//volatile bool transfer_is_done = false;
 
 static struct {
   EPortType port;      // PORTA|PORTB
@@ -209,5 +203,34 @@ void HUB8DMAClass::begin()
     status = DMA.startJob();
 
     DMA.trigger(); // and we're off!
+
+}
+
+
+void HUB8DMAClass::fillframe(uint8_t frame, uint8_t (&buffer)[])
+{
+    int i=0;
+    for (uint8_t r=0; r<rows; r++){
+        for (uint8_t byte=0; byte<(columns/8); byte++){
+            for (uint8_t bit=7; bit>=0; bit--){
+
+                if (buffer[i] & (1<<bit)) {
+                    
+                    // set R and G bits to 1
+                    framedata[frame][i] |= 0b01000000;
+                    framedata[frame][i] |= 0b10000000;
+                    
+                } else {
+                    // set R & G bits to 0
+
+                    framedata[frame][i] &= ~(0b01000000);
+                    framedata[frame][i] &= ~(0b10000000);
+
+                }
+                i++; 
+            }
+        }
+        i+=2; // pass over latches
+    }
 
 }
