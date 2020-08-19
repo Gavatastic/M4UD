@@ -3,6 +3,9 @@
 #include "wiring_private.h"
 #include <HUB08DMA.h>
 
+#define LATCHLEN 2
+#define BLANKS 0
+
 static struct {
   EPortType port;      // PORTA|PORTB
   uint8_t bit;         // Port bit (0-31)
@@ -66,10 +69,10 @@ HUB8DMAClass::HUB8DMAClass (uint8_t ndisplays, uint8_t nrows, uint8_t ncolumns, 
     // create framedata array to right dimensions
     framedata = new uint8_t*[frames];
     for (uint8_t i=0; i<frames; i++)
-        framedata[i]=new uint8_t[(rows*(columns*2)+2)];
+        framedata[i]=new uint8_t[(rows*((columns*2)+LATCHLEN+BLANKS))];
 
     // fill data with basic data required to toggle clock, select rows and latch data
-    prepareframes();
+    prepareframes2();
 
     // This sets the pointer to the classs instance, so that the callback wrapper knows where to find the routine to 
     // handle the callback actions
@@ -81,25 +84,85 @@ void HUB8DMAClass::prepareframes()
 {
     for (uint8_t f=0; f<frames; f++){                           // each frame in turn
         for (uint8_t r=0; r<rows; r++){                         // each row needs to be populated and have latches added
-            for (uint8_t c=0; c<displays*columns*2; c++){       // each row has displays*columns*2 bytes of data (the 2 required for clock off/on)
+            for (uint8_t c=0; c<displays*columns; c++){       // each row has displays*columns*2 bytes of data (the 2 required for clock off/on)
                 
                 // fill with clock signals, row selects and latch off data
-                framedata[f][r*((columns*2)+2)+c*2]= r ;            // clock low
-                framedata[f][r*((columns*2)+2)+c*2+1]= r | 0x20;    // clock high
+                framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2]= r | 0x10;            // clock low
+                framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2+1]= r | 0x20 | 0x10;    // clock high
+
+                if (r==c%rows && f==0){
+                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2] |= 0xC0 ;      // add red pin
+                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2+1] |= 0xC0;    // add red pin
+                }
+
              }
             // add latches to end of sequence of columns
-            framedata[f][r*((columns*2)+2)+(columns*2)] = r | 0x10;   // latch set to high, just for final two entries of row, no clock
-            framedata[f][r*((columns*2)+2)+(columns*2)+1] = r | 0x10;
+            framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)] = r;   // latch set to high, just for final two entries of row, no clock
+            framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)+1] = r ;
+
+            // add blanks to end of sequence of columns after latches
+            for (uint8_t i=0; i<BLANKS; i++){
+                if (i<BLANKS/2){
+                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)+LATCHLEN+i]=r|0x10;
+                } else {
+                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)+LATCHLEN+i]=r;
+                }
+            }
+
+        }
+    }
+}
+
+// variant prepared to tewts timing of OE and latch to minimise glare  - one colour only
+// Pin D7 (0x40) becomes OE
+
+void HUB8DMAClass::prepareframes2()
+{
+    for (uint8_t f=0; f<frames; f++){                           // each frame in turn
+        for (uint8_t r=0; r<rows; r++){                         // each row needs to be populated and have latches added
+            for (uint8_t c=0; c<displays*columns; c++){       // each row has displays*columns*2 bytes of data (the 2 required for clock off/on)
+                
+                // fill with clock signals, row selects and latch off data
+                framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2]= (r-1)&0x0f ;            // clock low
+                framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2+1]= ((r-1)&0x0f) | 0x20 ;    // clock high
+
+                if (r==c%rows && f==0){
+                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2] |= 0x80 ;      // add red pin
+                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2+1] |= 0x80;    // add red pin
+                }
+
+             }
+            // add latches to end of sequence of columns
+            framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)] = ((r-1)&0x0f) | 0x40 ;   // latch set to high, just for final two entries of row, no clock
+            framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)+1] = r |  0x40 | 0x10;
+
+            // add blanks to end of sequence of columns after latches
+            for (uint8_t i=0; i<BLANKS; i++){
+                if (i<BLANKS/2){
+                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)+LATCHLEN+i]=r|0x10;
+                } else {
+                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)+LATCHLEN+i]=r;
+                }
+            }
+
         }
     }
 }
 
 
+
+
 // This is the routine that we are telling ZeroDMA to callback to, declared as static
 void HUB8DMAClass::callback_wrapper(Adafruit_ZeroDMA *dma){
 
-    HUB8Ptr->dma_callback();  // call the member function to perform the actions that we want
+    // HUB8Ptr->dma_callback();  // call the member function to perform the actions that we want
+    // pinMode(13,OUTPUT);
+    // digitalWrite(13,LOW);
 
+    uint8_t *dst = &((uint8_t *)(&TCC0->PATT))[1]; // PAT.vec.PGV  < define destination for transfer (the pattern generator register)
+    HUB8Ptr->DMA.changeDescriptor(HUB8Ptr->DMACDesc, HUB8Ptr->framedata[HUB8Ptr->liveframe], dst, HUB8Ptr->rows*((HUB8Ptr->columns*2)+2));
+//    HUB8Ptr->DMA.changeDescriptor(HUB8Ptr->DMACDesc, HUB8Ptr->framedata[HUB8Ptr->liveframe], dst, HUB8Ptr->rows*((HUB8Ptr->columns*2)+2));
+    //HUB8Ptr->DMA.trigger();
 }
 
 // This is the routine that we really want to be called at callback, a non-static member that can see the member variables
@@ -107,9 +170,14 @@ void HUB8DMAClass::dma_callback() {
 
     uint8_t *dst = &((uint8_t *)(&TCC0->PATT))[1]; // PAT.vec.PGV  < define destination for transfer (the pattern generator register)
 
-    DMA.changeDescriptor(DMACDesc, &framedata[liveframe], dst, rows*((columns*2)+2));
+    pinMode(13,OUTPUT);
+    digitalWrite(13,HIGH);
 
+    DMA.changeDescriptor(DMACDesc, &framedata[liveframe], dst, rows*((columns*2)+LATCHLEN+BLANKS));
+    DMA.startJob();
     DMA.trigger();
+
+
 }
 
 
@@ -128,10 +196,16 @@ void HUB8DMAClass::begin()
 
     uint8_t *dst = &((uint8_t *)(&TCC0->PATT))[1]; // PAT.vec.PGV  < define destination for transfer (the pattern generator register)
 
-    DMACDesc = DMA.addDescriptor(&framedata[0],dst,rows*((columns*2)+2),DMA_BEAT_SIZE_BYTE,true,false,0,0); // define action for DMA task to take
+
+    uint32_t* alignedAddr = (uint32_t *)((uint32_t)(&framedata[0][0]) & ~3);
+    uint8_t *startAddr = (uint8_t *)alignedAddr;
 
 
-    DMA.setCallback(callback_wrapper);
+    DMACDesc = DMA.addDescriptor(startAddr,dst,rows*((columns*2)+LATCHLEN+BLANKS),DMA_BEAT_SIZE_BYTE,true,false,0,0); // define action for DMA task to take
+
+    DMA.loop(true);
+
+    DMA.setCallback(callback_wrapper); // <<<<<<< THIS IS WHERE WE SET THE CALLBACK TYPE (2nd param)
 
    // Set up generic clock gen 2 as source for TCC0
     // Datasheet recommends setting GENCTRL register in a single write,
@@ -204,30 +278,35 @@ void HUB8DMAClass::begin()
 
     DMA.trigger(); // and we're off!
 
+
 }
 
 
-void HUB8DMAClass::fillframe(uint8_t frame, uint8_t (&buffer)[])
+void HUB8DMAClass::fillframe(uint8_t frame, uint8_t buffer[])
 {
     int i=0;
     for (uint8_t r=0; r<rows; r++){
         for (uint8_t byte=0; byte<(columns/8); byte++){
             for (uint8_t bit=7; bit>=0; bit--){
 
-                if (buffer[i] & (1<<bit)) {
-                    
-                    // set R and G bits to 1
-                    framedata[frame][i] |= 0b01000000;
-                    framedata[frame][i] |= 0b10000000;
-                    
+                // RED
+                if (buffer[r*(columns/8)+byte] & (1<<bit)) {
+                    framedata[frame][i] |= 0b01000000;  // set R bit to 1
+                    framedata[frame][i+1] |= 0b01000000;  // set R bit to 1
                 } else {
-                    // set R & G bits to 0
-
-                    framedata[frame][i] &= ~(0b01000000);
-                    framedata[frame][i] &= ~(0b10000000);
-
+                    framedata[frame][i] &= ~(0b01000000); // set R bit to 0
+                    framedata[frame][i+1] &= ~(0b01000000); // set R bit to 0
                 }
-                i++; 
+
+                // GREEN
+                if (buffer[(rows*(columns/8))+r*(columns/8)+byte] & (1<<bit)) {
+                    framedata[frame][i] |= 0b10000000;      // set G bit to 1
+                    framedata[frame][i+1] |= 0b10000000;      // set G bit to 1
+                } else {
+                    framedata[frame][i] &= ~(0b10000000);   // set G bit to 0
+                    framedata[frame][i+1] &= ~(0b10000000);   // set G bit to 0
+                }
+                i+=2; 
             }
         }
         i+=2; // pass over latches
