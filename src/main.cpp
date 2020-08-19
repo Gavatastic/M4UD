@@ -1,4 +1,8 @@
 #include <Arduino.h>
+
+#include <Adafruit_DotStar.h>
+#include <SPI.h>
+
 #include <HUB08DMA.h>
 #include <BufferPaint.h>
 
@@ -7,7 +11,7 @@
 #define COLUMNS 64
 #define DISPLAYS 1
 
-HUB8DMAClass LEDs(DISPLAYS, ROWS, COLUMNS, FRAMES);
+Adafruit_DotStar RGBLED(1, 8, 6, DOTSTAR_BRG);
 Painter buffer1(ROWS, COLUMNS);
 
 void setup() {
@@ -15,14 +19,22 @@ void setup() {
   pinMode(SCL, OUTPUT);
   analogWrite(SCL, 240);
 
-  pinMode(0,OUTPUT);
+  pinMode(13,OUTPUT);
   digitalWrite(0,LOW);
   pinMode(1,OUTPUT);
-  digitalWrite(1,LOW);
+  digitalWrite(13,LOW);
 
-  LEDs.liveframe=0;
+  Hub08DMAInit(DISPLAYS, ROWS, COLUMNS, FRAMES);
 
-  LEDs.begin();
+  setliveframe(0);
+
+  RGBLED.begin();
+  RGBLED.show();
+  RGBLED.setPixelColor(0,0,0,100);
+  RGBLED.show();
+
+
+  Hub08DMABegin();
 
   //buffer1.drawPoint(10,10,2);
 
@@ -48,11 +60,21 @@ void setup() {
 }
 
 void loop() {
-  
-  // LEDs.liveframe=0;
-  // delay();
-  // LEDs.liveframe=1;
-  // delay(2000);
+
+
+  while (1==1) {
+      setliveframe(0);
+      delay(2000);
+      RGBLED.setPixelColor(0,100,0,0);
+      RGBLED.show();
+      //digitalWrite(13, !digitalRead(13));
+      
+      setliveframe(1);
+      delay(2000);
+      RGBLED.setPixelColor(0,100,100,0);
+      RGBLED.show();
+      //digitalWrite(13, !digitalRead(13));
+  }
 
 }
 

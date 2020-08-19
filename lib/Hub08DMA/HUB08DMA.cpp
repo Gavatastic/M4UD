@@ -6,6 +6,21 @@
 #define LATCHLEN 2
 #define BLANKS 0
 
+uint8_t frames;             // number of frames to be maintained
+
+uint8_t displays;           // number of displays
+
+int framelen;               // length of frame, including latches, that needs to be output via DMA
+uint8_t liveframe;          // index of frame to be displayed
+uint8_t columns;            // number of columns per display
+uint8_t rows;               // number of rows per display
+uint8_t** framedata;        // array to store frame data 
+
+Adafruit_ZeroDMA DMA;       // DMA instance
+ZeroDMAstatus    status;    // DMA return status
+DmacDescriptor   *DMACDesc; // DMA configuration object for instance
+
+
 static struct {
   EPortType port;      // PORTA|PORTB
   uint8_t bit;         // Port bit (0-31)
@@ -57,9 +72,8 @@ static uint8_t configurePin(uint8_t pin) {
   return 0;
 }
 
-HUB8DMAClass * HUB8DMAClass::HUB8Ptr; // required else it fails at linking!!
 
-HUB8DMAClass::HUB8DMAClass (uint8_t ndisplays, uint8_t nrows, uint8_t ncolumns, uint8_t nframes) {
+void Hub08DMAInit(uint8_t ndisplays, uint8_t nrows, uint8_t ncolumns, uint8_t nframes) {
 
     frames=nframes;
     displays=ndisplays;
@@ -74,13 +88,9 @@ HUB8DMAClass::HUB8DMAClass (uint8_t ndisplays, uint8_t nrows, uint8_t ncolumns, 
     // fill data with basic data required to toggle clock, select rows and latch data
     prepareframes2();
 
-    // This sets the pointer to the classs instance, so that the callback wrapper knows where to find the routine to 
-    // handle the callback actions
-    HUB8Ptr=this;
-
 };
 
-void HUB8DMAClass::prepareframes()
+void prepareframes()
 {
     for (uint8_t f=0; f<frames; f++){                           // each frame in turn
         for (uint8_t r=0; r<rows; r++){                         // each row needs to be populated and have latches added
@@ -116,7 +126,7 @@ void HUB8DMAClass::prepareframes()
 // variant prepared to tewts timing of OE and latch to minimise glare  - one colour only
 // Pin D7 (0x40) becomes OE
 
-void HUB8DMAClass::prepareframes2()
+void prepareframes2()
 {
     for (uint8_t f=0; f<frames; f++){                           // each frame in turn
         for (uint8_t r=0; r<rows; r++){                         // each row needs to be populated and have latches added
@@ -152,37 +162,21 @@ void HUB8DMAClass::prepareframes2()
 
 
 
-// This is the routine that we are telling ZeroDMA to callback to, declared as static
-void HUB8DMAClass::callback_wrapper(Adafruit_ZeroDMA *dma){
-
-    // HUB8Ptr->dma_callback();  // call the member function to perform the actions that we want
-    // pinMode(13,OUTPUT);
-    // digitalWrite(13,LOW);
-
-    uint8_t *dst = &((uint8_t *)(&TCC0->PATT))[1]; // PAT.vec.PGV  < define destination for transfer (the pattern generator register)
-    HUB8Ptr->DMA.changeDescriptor(HUB8Ptr->DMACDesc, HUB8Ptr->framedata[HUB8Ptr->liveframe], dst, HUB8Ptr->rows*((HUB8Ptr->columns*2)+2));
-//    HUB8Ptr->DMA.changeDescriptor(HUB8Ptr->DMACDesc, HUB8Ptr->framedata[HUB8Ptr->liveframe], dst, HUB8Ptr->rows*((HUB8Ptr->columns*2)+2));
-    //HUB8Ptr->DMA.trigger();
-}
 
 // This is the routine that we really want to be called at callback, a non-static member that can see the member variables
-void HUB8DMAClass::dma_callback() {
+void dma_callback(Adafruit_ZeroDMA *dma) {
 
     uint8_t *dst = &((uint8_t *)(&TCC0->PATT))[1]; // PAT.vec.PGV  < define destination for transfer (the pattern generator register)
 
-    pinMode(13,OUTPUT);
-    digitalWrite(13,HIGH);
+    DMA.changeDescriptor(DMACDesc, framedata[liveframe], dst, rows*((columns*2)+LATCHLEN+BLANKS));
+    DMA.resume();
+    // DMA.trigger();
 
-    DMA.changeDescriptor(DMACDesc, &framedata[liveframe], dst, rows*((columns*2)+LATCHLEN+BLANKS));
-    DMA.startJob();
-    DMA.trigger();
-
+    // digitalWrite(SCL, !digitalRead(SCL));
 
 }
 
-
-
-void HUB8DMAClass::begin()
+void Hub08DMABegin()
 {
   
     uint8_t bitmask[8];
@@ -202,10 +196,11 @@ void HUB8DMAClass::begin()
 
 
     DMACDesc = DMA.addDescriptor(startAddr,dst,rows*((columns*2)+LATCHLEN+BLANKS),DMA_BEAT_SIZE_BYTE,true,false,0,0); // define action for DMA task to take
+    DMACDesc->BTCTRL.bit.BLOCKACT = DMA_BLOCK_ACTION_INT;
 
     DMA.loop(true);
 
-    DMA.setCallback(callback_wrapper); // <<<<<<< THIS IS WHERE WE SET THE CALLBACK TYPE (2nd param)
+    DMA.setCallback(dma_callback); // <<<<<<< THIS IS WHERE WE SET THE CALLBACK TYPE (2nd param)
 
    // Set up generic clock gen 2 as source for TCC0
     // Datasheet recommends setting GENCTRL register in a single write,
@@ -282,7 +277,7 @@ void HUB8DMAClass::begin()
 }
 
 
-void HUB8DMAClass::fillframe(uint8_t frame, uint8_t buffer[])
+void fillframe(uint8_t frame, uint8_t buffer[])
 {
     int i=0;
     for (uint8_t r=0; r<rows; r++){
@@ -311,5 +306,10 @@ void HUB8DMAClass::fillframe(uint8_t frame, uint8_t buffer[])
         }
         i+=2; // pass over latches
     }
+
+}
+
+void setliveframe(uint8_t setframe){
+    liveframe=setframe;
 
 }

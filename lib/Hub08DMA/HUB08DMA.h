@@ -14,38 +14,18 @@
 #include "wiring_private.h"
 
 
-class HUB8DMAClass{
 
-    private:
-        uint8_t frames;             // number of frames to be maintained
+void prepareframes();       // fill frame structure with row selection, clock and latch data
+void prepareframes2();       // test on OE / latch timing. Remove after use
 
-        uint8_t displays;           // number of displays
-
-        int framelen;               // length of frame, including latches, that needs to be output via DMA
-        void prepareframes();       // fill frame structure with row selection, clock and latch data
-        void prepareframes2();       // test on OE / latch timing. Remove after use
-
-        Adafruit_ZeroDMA DMA;       // DMA instance
-        ZeroDMAstatus    status;    // DMA return status
-        DmacDescriptor   *DMACDesc; // DMA configuration object for instance
-
-    public:
-
-        void fillframe(uint8_t frame, uint8_t buffer[]); // transfer data from buffer into frame
-        void fillframe(uint8_t frame, uint8_t &buffer, int column); // transfer data from buffer from specified column into frame
+void fillframe(uint8_t frame, uint8_t buffer[]); // transfer data from buffer into frame
+void fillframe(uint8_t frame, uint8_t &buffer, int column); // transfer data from buffer from specified column into frame
        
-        static HUB8DMAClass *HUB8Ptr;    // pointer to instance
-        static void callback_wrapper(Adafruit_ZeroDMA *dma); 
-        void dma_callback(); 
+void dma_callback(Adafruit_ZeroDMA *dma); 
         
-        HUB8DMAClass(uint8_t ndisplays, uint8_t nrows, uint8_t ncolumns, uint8_t nframes); 
+void Hub08DMAInit(uint8_t ndisplays, uint8_t nrows, uint8_t ncolumns, uint8_t nframes); 
 
-        void begin();               // begin class - includes initialisation of DMA
-        uint8_t liveframe;          // index of frame to be displayed
-        uint8_t columns;            // number of columns per display
-        uint8_t rows;               // number of rows per display
-        uint8_t** framedata;        // array to store frame data 
-};
-
+void Hub08DMABegin();               // begin class - includes initialisation of DMA
+void setliveframe(uint8_t setframe);
 
 #endif
