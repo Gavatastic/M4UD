@@ -16,13 +16,13 @@ Painter buffer1(ROWS, COLUMNS);
 
 void setup() {
   
-  pinMode(SCL, OUTPUT);
-  analogWrite(SCL, 240);
+  pinMode(A5, OUTPUT);
+
 
   pinMode(13,OUTPUT);
   digitalWrite(0,LOW);
-  pinMode(1,OUTPUT);
-  digitalWrite(13,LOW);
+  // pinMode(1,OUTPUT);
+  //digitalWrite(13,LOW);
 
   Hub08DMAInit(DISPLAYS, ROWS, COLUMNS, FRAMES);
 

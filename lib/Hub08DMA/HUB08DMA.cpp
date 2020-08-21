@@ -10,7 +10,7 @@ uint8_t frames;             // number of frames to be maintained
 
 uint8_t displays;           // number of displays
 
-int framelen;               // length of frame, including latches, that needs to be output via DMA
+int rowlen;               // length of frame, including latches, that needs to be output via DMA
 uint8_t liveframe;          // index of frame to be displayed
 uint8_t columns;            // number of columns per display
 uint8_t rows;               // number of rows per display
@@ -18,8 +18,19 @@ uint8_t** framedata;        // array to store frame data
 
 Adafruit_ZeroDMA DMA;       // DMA instance
 ZeroDMAstatus    status;    // DMA return status
-DmacDescriptor   *DMACDesc; // DMA configuration object for instance
+DmacDescriptor   *DMACDesc1; // DMA configuration object for top half of display
+DmacDescriptor   *DMACDesc2; // DMA configuration object for bottom half of display
 
+EPortType Dport; // Determine port and pin numbers for A5 to save time in callback routine
+
+uint32_t Apin;
+uint32_t Bpin;
+uint32_t Cpin;
+
+uint32_t Dpin;
+
+uint32_t ABCpinMask;
+uint32_t DpinMask;
 
 static struct {
   EPortType port;      // PORTA|PORTB
@@ -80,87 +91,87 @@ void Hub08DMAInit(uint8_t ndisplays, uint8_t nrows, uint8_t ncolumns, uint8_t nf
     columns=ncolumns;
     rows=nrows;
 
+    rowlen=((displays*columns*2)+2);
+
     // create framedata array to right dimensions
     framedata = new uint8_t*[frames];
     for (uint8_t i=0; i<frames; i++)
-        framedata[i]=new uint8_t[(rows*((columns*2)+LATCHLEN+BLANKS))];
+        framedata[i]=new uint8_t[(rows*rowlen)];
+
+
+
 
     // fill data with basic data required to toggle clock, select rows and latch data
-    prepareframes2();
+    prepareframes();
+
+    Dport = g_APinDescription[A5].ulPort;
+    Dpin = g_APinDescription[A5].ulPin;
+    DpinMask = (1ul << Dpin);
+
+    Apin= g_APinDescription[10].ulPin;
+    Bpin= g_APinDescription[11].ulPin;
+    Cpin= g_APinDescription[13].ulPin;
+    ABCpinMask=(1ul << Apin) | (1ul << Bpin) | (1ul << Cpin);
 
 };
 
+
+
 void prepareframes()
 {
-    for (uint8_t f=0; f<frames; f++){                           // each frame in turn
-        for (uint8_t r=0; r<rows; r++){                         // each row needs to be populated and have latches added
-            for (uint8_t c=0; c<displays*columns; c++){       // each row has displays*columns*2 bytes of data (the 2 required for clock off/on)
-                
-                // fill with clock signals, row selects and latch off data
-                framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2]= r | 0x10;            // clock low
-                framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2+1]= r | 0x20 | 0x10;    // clock high
 
-                if (r==c%rows && f==0){
-                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2] |= 0xC0 ;      // add red pin
-                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2+1] |= 0xC0;    // add red pin
-                }
+// 7. Not so fast! - the framedata arrays need to be restructured so that bytes where D should
+// be set/not-set are stored in two contiguous blocks - this is not as simple as r0-7 and r8-15
+// This means starting wth the latch for row 0, then all the data for rows 1-8 (minus the latch for row 8)
+// followed by the row for latch 8, all the way to row 0 minus the latch for row 0. Simple
+// Need a formula for calculating position in framedata on an RC basis. Still, at least it's only one function!
 
-             }
-            // add latches to end of sequence of columns
-            framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)] = r;   // latch set to high, just for final two entries of row, no clock
-            framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)+1] = r ;
 
-            // add blanks to end of sequence of columns after latches
-            for (uint8_t i=0; i<BLANKS; i++){
-                if (i<BLANKS/2){
-                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)+LATCHLEN+i]=r|0x10;
-                } else {
-                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)+LATCHLEN+i]=r;
-                }
+// When sending out data for a row, we are line selecting for the previous row
+    uint8_t i,s;
+
+    for (uint8_t f=0; f<frames; f++){    
+
+        for (uint8_t r=1; r<=rows; r++){
+            i=r-1; // for indexing array
+            s=r%rows; // for array contents - loops from 1 to 0 via (rows-1)
+
+            framedata[f][i*rowlen] = (i & 0x07) | EN | LATCH; // Latch previous row's data out, 
+            //framedata[f][i*((columns*displays*2)+2)] = (i & 0x07) |  EN ; 
+
+            for (uint8_t c=0; c<columns*displays; c++){
+
+                // fill with clocks and line selects. Line selects relate to data sent out in previous iteration so i
+                framedata[f][i*rowlen+c*2+1]=(i & 0x07) ;
+                framedata[f][i*rowlen+c*2+2]=(i & 0x07) | CLOCK ;
+
+                // add a pattern so we can test
+                if (s==c%rows && f==0){
+                    if (s%2==1){ 
+                        framedata[f][i*rowlen+c*2+1] |= (RED+GREEN);
+                        framedata[f][i*rowlen+c*2+2] |= (RED+GREEN);
+                    } else {
+                        framedata[f][i*rowlen+c*2+1] |= GREEN;
+                        framedata[f][i*rowlen+c*2+2] |= GREEN;
+                    }
+                } 
+
+                //turn LEDs off early to reduce bleed when latching
+                // if (c>columns*rows*0.25){
+                //     framedata[f][i*((columns*displays*2)+2)+c*2+1] |= EN;
+                //     framedata[f][i*((columns*displays*2)+2)+c*2+2] |= EN;  
+
+                // }
+
             }
 
+            framedata[f][i*rowlen+(columns*displays*2)+1] = (i & 0x07) | EN; 
+            //framedata[f][i*rowlen+(columns*displays*2)+2] = (i & 0x07) | EN | LATCH ;  
         }
-    }
+
+    }    
+
 }
-
-// variant prepared to tewts timing of OE and latch to minimise glare  - one colour only
-// Pin D7 (0x40) becomes OE
-
-void prepareframes2()
-{
-    for (uint8_t f=0; f<frames; f++){                           // each frame in turn
-        for (uint8_t r=0; r<rows; r++){                         // each row needs to be populated and have latches added
-            for (uint8_t c=0; c<displays*columns; c++){       // each row has displays*columns*2 bytes of data (the 2 required for clock off/on)
-                
-                // fill with clock signals, row selects and latch off data
-                framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2]= (r-1)&0x0f ;            // clock low
-                framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2+1]= ((r-1)&0x0f) | 0x20 ;    // clock high
-
-                if (r==c%rows && f==0){
-                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2] |= 0x80 ;      // add red pin
-                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+c*2+1] |= 0x80;    // add red pin
-                }
-
-             }
-            // add latches to end of sequence of columns
-            framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)] = ((r-1)&0x0f) | 0x40 ;   // latch set to high, just for final two entries of row, no clock
-            framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)+1] = r |  0x40 | 0x10;
-
-            // add blanks to end of sequence of columns after latches
-            for (uint8_t i=0; i<BLANKS; i++){
-                if (i<BLANKS/2){
-                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)+LATCHLEN+i]=r|0x10;
-                } else {
-                    framedata[f][r*((columns*2)+LATCHLEN+BLANKS)+(columns*2)+LATCHLEN+i]=r;
-                }
-            }
-
-        }
-    }
-}
-
-
-
 
 
 // This is the routine that we really want to be called at callback, a non-static member that can see the member variables
@@ -168,11 +179,11 @@ void dma_callback(Adafruit_ZeroDMA *dma) {
 
     uint8_t *dst = &((uint8_t *)(&TCC0->PATT))[1]; // PAT.vec.PGV  < define destination for transfer (the pattern generator register)
 
-    DMA.changeDescriptor(DMACDesc, framedata[liveframe], dst, rows*((columns*2)+LATCHLEN+BLANKS));
-    DMA.resume();
-    // DMA.trigger();
+    // DMA.changeDescriptor(DMACDesc1, framedata[liveframe], dst, rows*((columns*2)+LATCHLEN+BLANKS));
+    // DMA.changeDescriptor(DMACDesc2, framedata[liveframe]+(rows*((columns*2)+LATCHLEN+BLANKS))/2, dst, rows*((columns*2)+LATCHLEN+BLANKS));
 
-    // digitalWrite(SCL, !digitalRead(SCL));
+    PORT->Group[Dport].OUTTGL.reg = DpinMask | ABCpinMask;
+    DMA.resume();
 
 }
 
@@ -193,14 +204,17 @@ void Hub08DMABegin()
 
     uint32_t* alignedAddr = (uint32_t *)((uint32_t)(&framedata[0][0]) & ~3);
     uint8_t *startAddr = (uint8_t *)alignedAddr;
+    DMACDesc1 = DMA.addDescriptor(startAddr,dst,(rows*rowlen)/2,DMA_BEAT_SIZE_BYTE,true,false,0,0); // define action for DMA task to take
+    DMACDesc1->BTCTRL.bit.BLOCKACT = DMA_BLOCK_ACTION_BOTH;
 
-
-    DMACDesc = DMA.addDescriptor(startAddr,dst,rows*((columns*2)+LATCHLEN+BLANKS),DMA_BEAT_SIZE_BYTE,true,false,0,0); // define action for DMA task to take
-    DMACDesc->BTCTRL.bit.BLOCKACT = DMA_BLOCK_ACTION_INT;
+    alignedAddr = (uint32_t *)((uint32_t)(&framedata[0][(rows*rowlen)/2]) & ~3);
+    startAddr = (uint8_t *)alignedAddr;
+    DMACDesc2 = DMA.addDescriptor(startAddr,dst,(rows*rowlen)/2,DMA_BEAT_SIZE_BYTE,true,false,0,0); // define action for DMA task to take
+    DMACDesc2->BTCTRL.bit.BLOCKACT = DMA_BLOCK_ACTION_BOTH;
 
     DMA.loop(true);
 
-    DMA.setCallback(dma_callback); // <<<<<<< THIS IS WHERE WE SET THE CALLBACK TYPE (2nd param)
+    DMA.setCallback(dma_callback,DMA_CALLBACK_CHANNEL_SUSPEND); // <<<<<<< THIS IS WHERE WE SET THE CALLBACK TYPE (2nd param)
 
    // Set up generic clock gen 2 as source for TCC0
     // Datasheet recommends setting GENCTRL register in a single write,
