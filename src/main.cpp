@@ -9,7 +9,7 @@
 #define FRAMES 2
 #define ROWS 16
 #define COLUMNS 64
-#define DISPLAYS 1
+#define DISPLAYS 2
 
 Adafruit_DotStar RGBLED(1, 8, 6, DOTSTAR_BRG);
 Painter buffer1(ROWS, COLUMNS);

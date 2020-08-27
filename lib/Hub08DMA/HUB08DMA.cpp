@@ -11,6 +11,9 @@ uint8_t frames;             // number of frames to be maintained
 uint8_t displays;           // number of displays
 
 int rowlen;               // length of frame, including latches, that needs to be output via DMA
+volatile bool framechanged;          // indicates that frame has changed and that DMA Descriptors need to be changed
+uint8_t *startAddrTop;      // start address of array containing top half of display(s)
+uint8_t *startAddrBot;      // start address of array containing bottom half of display(s) 
 uint8_t liveframe;          // index of frame to be displayed
 uint8_t columns;            // number of columns per display
 uint8_t rows;               // number of rows per display
@@ -156,6 +159,17 @@ void prepareframes()
                     }
                 } 
 
+                // add a pattern so we can test
+                if (s==(c+8)%rows && f==0){
+                    if (s%2==1){ 
+                        framedata[f][i*rowlen+c*2+1] |= (RED+GREEN);
+                        framedata[f][i*rowlen+c*2+2] |= (RED+GREEN);
+                    } else {
+                        framedata[f][i*rowlen+c*2+1] |= RED;
+                        framedata[f][i*rowlen+c*2+2] |= RED;
+                    }
+                } 
+
                 //turn LEDs off early to reduce bleed when latching
                 // if (c>columns*rows*0.25){
                 //     framedata[f][i*((columns*displays*2)+2)+c*2+1] |= EN;
@@ -177,10 +191,12 @@ void prepareframes()
 // This is the routine that we really want to be called at callback, a non-static member that can see the member variables
 void dma_callback(Adafruit_ZeroDMA *dma) {
 
-    uint8_t *dst = &((uint8_t *)(&TCC0->PATT))[1]; // PAT.vec.PGV  < define destination for transfer (the pattern generator register)
-
-    // DMA.changeDescriptor(DMACDesc1, framedata[liveframe], dst, rows*((columns*2)+LATCHLEN+BLANKS));
-    // DMA.changeDescriptor(DMACDesc2, framedata[liveframe]+(rows*((columns*2)+LATCHLEN+BLANKS))/2, dst, rows*((columns*2)+LATCHLEN+BLANKS));
+    if (framechanged) {
+        uint8_t *dst = &((uint8_t *)(&TCC0->PATT))[1]; // PAT.vec.PGV  < define destination for transfer (the pattern generator register)
+        DMA.changeDescriptor(DMACDesc1, startAddrTop, dst, (rows*rowlen)/2);
+        DMA.changeDescriptor(DMACDesc2, startAddrBot, dst, (rows*rowlen)/2);
+        framechanged=false;
+    }
 
     PORT->Group[Dport].OUTTGL.reg = DpinMask | ABCpinMask;
     DMA.resume();
@@ -203,13 +219,13 @@ void Hub08DMABegin()
 
 
     uint32_t* alignedAddr = (uint32_t *)((uint32_t)(&framedata[0][0]) & ~3);
-    uint8_t *startAddr = (uint8_t *)alignedAddr;
-    DMACDesc1 = DMA.addDescriptor(startAddr,dst,(rows*rowlen)/2,DMA_BEAT_SIZE_BYTE,true,false,0,0); // define action for DMA task to take
+    startAddrTop = (uint8_t *)alignedAddr;
+    DMACDesc1 = DMA.addDescriptor(startAddrTop,dst,(rows*rowlen)/2,DMA_BEAT_SIZE_BYTE,true,false,0,0); // define action for DMA task to take
     DMACDesc1->BTCTRL.bit.BLOCKACT = DMA_BLOCK_ACTION_BOTH;
 
     alignedAddr = (uint32_t *)((uint32_t)(&framedata[0][(rows*rowlen)/2]) & ~3);
-    startAddr = (uint8_t *)alignedAddr;
-    DMACDesc2 = DMA.addDescriptor(startAddr,dst,(rows*rowlen)/2,DMA_BEAT_SIZE_BYTE,true,false,0,0); // define action for DMA task to take
+    startAddrBot = (uint8_t *)alignedAddr;
+    DMACDesc2 = DMA.addDescriptor(startAddrBot,dst,(rows*rowlen)/2,DMA_BEAT_SIZE_BYTE,true,false,0,0); // define action for DMA task to take
     DMACDesc2->BTCTRL.bit.BLOCKACT = DMA_BLOCK_ACTION_BOTH;
 
     DMA.loop(true);
@@ -324,6 +340,11 @@ void fillframe(uint8_t frame, uint8_t buffer[])
 }
 
 void setliveframe(uint8_t setframe){
-    liveframe=setframe;
 
+    uint32_t* alignedAddr = (uint32_t *)((uint32_t)(&framedata[setframe][0]) & ~3);
+    startAddrTop = (uint8_t *)alignedAddr;
+    alignedAddr = (uint32_t *)((uint32_t)(&framedata[setframe][(rows*rowlen)/2]) & ~3);  
+    startAddrBot = (uint8_t *)alignedAddr;  
+
+    framechanged=true; 
 }
