@@ -10,10 +10,9 @@ uint8_t frames;             // number of frames to be maintained
 
 uint8_t displays;           // number of displays
 
-int rowlen;               // length of frame, including latches, that needs to be output via DMA
+int rowlen;                 // length of frame, including latches, that needs to be output via DMA
 volatile bool framechanged;          // indicates that frame has changed and that DMA Descriptors need to be changed
-uint8_t *startAddrTop;      // start address of array containing top half of display(s)
-uint8_t *startAddrBot;      // start address of array containing bottom half of display(s) 
+
 uint8_t liveframe;          // index of frame to be displayed
 uint8_t columns;            // number of columns per display
 uint8_t rows;               // number of rows per display
@@ -21,18 +20,13 @@ uint8_t** framedata;        // array to store frame data
 
 Adafruit_ZeroDMA DMA;       // DMA instance
 ZeroDMAstatus    status;    // DMA return status
-DmacDescriptor   *DMACDesc1; // DMA configuration object for top half of display
-DmacDescriptor   *DMACDesc2; // DMA configuration object for bottom half of display
+DmacDescriptor   *DMACDesc1; // DMA configuration object for top half of display(s)
+DmacDescriptor   *DMACDesc2; // DMA configuration object for bottom half of display(s)
+uint8_t *startAddrTop;      // start address of array containing top half of display(s)
+uint8_t *startAddrBot;      // start address of array containing bottom half of display(s) 
 
-EPortType Dport; // Determine port and pin numbers for A5 to save time in callback routine
-
-uint32_t Apin;
-uint32_t Bpin;
-uint32_t Cpin;
-
+EPortType Dport;            // Determine port and pin numbers for A5 to save time in callback routine
 uint32_t Dpin;
-
-uint32_t ABCpinMask;
 uint32_t DpinMask;
 
 static struct {
@@ -111,23 +105,12 @@ void Hub08DMAInit(uint8_t ndisplays, uint8_t nrows, uint8_t ncolumns, uint8_t nf
     Dpin = g_APinDescription[A5].ulPin;
     DpinMask = (1ul << Dpin);
 
-    Apin= g_APinDescription[10].ulPin;
-    Bpin= g_APinDescription[11].ulPin;
-    Cpin= g_APinDescription[13].ulPin;
-    ABCpinMask=(1ul << Apin) | (1ul << Bpin) | (1ul << Cpin);
-
 };
 
 
 
 void prepareframes()
 {
-
-// 7. Not so fast! - the framedata arrays need to be restructured so that bytes where D should
-// be set/not-set are stored in two contiguous blocks - this is not as simple as r0-7 and r8-15
-// This means starting wth the latch for row 0, then all the data for rows 1-8 (minus the latch for row 8)
-// followed by the row for latch 8, all the way to row 0 minus the latch for row 0. Simple
-// Need a formula for calculating position in framedata on an RC basis. Still, at least it's only one function!
 
 
 // When sending out data for a row, we are line selecting for the previous row
@@ -170,17 +153,11 @@ void prepareframes()
                     }
                 } 
 
-                //turn LEDs off early to reduce bleed when latching
-                // if (c>columns*rows*0.25){
-                //     framedata[f][i*((columns*displays*2)+2)+c*2+1] |= EN;
-                //     framedata[f][i*((columns*displays*2)+2)+c*2+2] |= EN;  
-
-                // }
 
             }
 
             framedata[f][i*rowlen+(columns*displays*2)+1] = (i & 0x07) | EN; 
-            //framedata[f][i*rowlen+(columns*displays*2)+2] = (i & 0x07) | EN | LATCH ;  
+
         }
 
     }    
@@ -198,7 +175,7 @@ void dma_callback(Adafruit_ZeroDMA *dma) {
         framechanged=false;
     }
 
-    PORT->Group[Dport].OUTTGL.reg = DpinMask | ABCpinMask;
+    PORT->Group[Dport].OUTTGL.reg = DpinMask;
     DMA.resume();
 
 }

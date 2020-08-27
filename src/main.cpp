@@ -18,12 +18,6 @@ void setup() {
   
   pinMode(A5, OUTPUT);
 
-
-  pinMode(13,OUTPUT);
-  digitalWrite(0,LOW);
-  // pinMode(1,OUTPUT);
-  //digitalWrite(13,LOW);
-
   Hub08DMAInit(DISPLAYS, ROWS, COLUMNS, FRAMES);
 
   setliveframe(0);
@@ -33,30 +27,9 @@ void setup() {
   RGBLED.setPixelColor(0,0,0,100);
   RGBLED.show();
 
-
   Hub08DMABegin();
 
-  //buffer1.drawPoint(10,10,2);
-
-
-  // uint8_t*** tempbuf[2][16][8];
-
-  // for (uint8_t f=0; f<1; f++){
-  //   for (uint8_t r=0; r<16; r++){
-  //     for (uint8_t c=0; c<8; c++){
-
-  //       tempbuf[f][r][c]=(uint8_t)0xf0;
-
-  //     }
-  //   }
-  // }
-
-
-
-  //LEDs.fillframe(0,(uint8_t*)&buffer1.buffer);
-  //LEDs.fillframe(1,&tempbuf);
-
-
+  
 }
 
 void loop() {
@@ -67,13 +40,12 @@ void loop() {
       delay(2000);
       RGBLED.setPixelColor(0,100,0,0);
       RGBLED.show();
-      //digitalWrite(13, !digitalRead(13));
       
       setliveframe(1);
       delay(2000);
       RGBLED.setPixelColor(0,100,100,0);
       RGBLED.show();
-      //digitalWrite(13, !digitalRead(13));
+
   }
 
 }
