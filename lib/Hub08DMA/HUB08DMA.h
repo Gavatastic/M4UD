@@ -8,9 +8,6 @@
 # include <WProgram.h>
 #endif
 
-
-
-
 // Pin and bit mappings 
 
 // D0(RX)   Latch   L   Port A Pin 16   TCC0.WO4    0x10
@@ -30,40 +27,30 @@
 #define LATCH 0x10
 #define EN 0x08
 
-// Actions required to implement
-// 1. Connect A5 to D
-// 2. Connect D12 to EN
-// 2a. Check wiring of R1 and G1
-// 3. Rewrite fillframe so that 0x04 is enable, Green is returned to G1, set some pixels green
-
-// 4. Declare second DMADesc, double-up Descriptor code
-// 5. Toggle pin A5 in callback routine
-// 6. Done
-
-// 7. Not so fast! - the framedata arrays need to be restructured so that bytes where D should
-// be set/not-set are stored in two contiguous blocks - this is not as simple as r0-7 and r8-15
-// This means starting wth the latch for row 0, then all the data for rows 1-8 (minus the latch for row 8)
-// followed by the row for latch 8, all the way to row 0 minus the latch for row 0. Simple
-// Need a formula for calculating position in framedata on an RC basis. Still, at least it's only one function!
-
+#define BUFRED 0
+#define BUFGREEN 1
+#define BUFBLINK 2
 
 // Required for work with Adafruit ZeroDMA library
 #include <Adafruit_ZeroDMA.h>
 #include "wiring_private.h"
 
-
-
 void prepareframes();       // fill frame structure with row selection, clock and latch data
-void prepareframes2();
 
-void fillframe(uint8_t frame, uint8_t buffer[]); // transfer data from buffer into frame
-void fillframe(uint8_t frame, uint8_t &buffer, int column); // transfer data from buffer from specified column into frame
+//void fillframe(uint8_t frame, uint8_t buffer[]); // transfer data from buffer into frame
+void fillframe(uint8_t frame, uint16_t column); // transfer data from buffer from specified column into frame
        
 void dma_callback(Adafruit_ZeroDMA *dma); 
         
-void Hub08DMAInit(uint8_t ndisplays, uint8_t nrows, uint8_t ncolumns, uint8_t nframes); 
+void Hub08DMAInit(uint8_t ndisplays, uint8_t nrows, uint8_t ncolumns, uint8_t nframes, uint16_t bufferwidth); 
 
 void Hub08DMABegin();               // begin class - includes initialisation of DMA
 void setliveframe(uint8_t setframe);
+void setextent(uint16_t _extent);
+void setPixel(uint16_t x, uint8_t y, bool red, bool green, bool flash);
+void TestPattern();
+void clearBuffer();
+uint16_t index(uint8_t col, uint16_t x, uint8_t y);
+void paintDirect(uint8_t frame, uint16_t x, uint8_t y, bool red, bool green);
 
 #endif

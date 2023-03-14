@@ -2,21 +2,30 @@
 #include <Adafruit_ZeroDMA.h>
 #include "wiring_private.h"
 #include <HUB08DMA.h>
+#include <fonts.h>
+#include <sstream>
 
 #define LATCHLEN 2
 #define BLANKS 0
 
-uint8_t frames;             // number of frames to be maintained
+using namespace std;
 
+uint8_t frames;             // number of frames to be maintained
 uint8_t displays;           // number of displays
 
 int rowlen;                 // length of frame, including latches, that needs to be output via DMA
-volatile bool framechanged;          // indicates that frame has changed and that DMA Descriptors need to be changed
-
+volatile bool framechanged; // indicates that frame has changed and that DMA Descriptors need to be changed
 uint8_t liveframe;          // index of frame to be displayed
 uint8_t columns;            // number of columns per display
 uint8_t rows;               // number of rows per display
 uint8_t** framedata;        // array to store frame data 
+
+//uint8_t*** buffer;          // array of colour (red/green/flash) by rows by bufferwidth
+//uint8_t* buffer;
+
+uint8_t buffer[3*16*128*4];  // colours * rows * columns * what?
+uint16_t bufferwidth;        // length of buffer in columns
+//uint16_t extent;             // amount of buffer to display
 
 Adafruit_ZeroDMA DMA;       // DMA instance
 ZeroDMAstatus    status;    // DMA return status
@@ -81,37 +90,44 @@ static uint8_t configurePin(uint8_t pin) {
 }
 
 
-void Hub08DMAInit(uint8_t ndisplays, uint8_t nrows, uint8_t ncolumns, uint8_t nframes) {
+void Hub08DMAInit(uint8_t ndisplays, uint8_t nrows, uint8_t ncolumns, uint8_t nframes, uint16_t _bufferwidth) {
 
     frames=nframes;
     displays=ndisplays;
     columns=ncolumns;
     rows=nrows;
+    bufferwidth=_bufferwidth;
 
-    rowlen=((displays*columns*2)+2);
+    rowlen=((displays*columns*2)+2);  // ?? this needs explaining
 
     // create framedata array to right dimensions
     framedata = new uint8_t*[frames];
     for (uint8_t i=0; i<frames; i++)
         framedata[i]=new uint8_t[(rows*rowlen)];
 
-
-
-
     // fill data with basic data required to toggle clock, select rows and latch data
     prepareframes();
 
+    // Pin to be used to D (the MSB of the line select) - toggled manually outside of DMA
     Dport = g_APinDescription[A5].ulPort;
     Dpin = g_APinDescription[A5].ulPin;
     DpinMask = (1ul << Dpin);
 
-};
+    // create buffer array to right dimensions
+    // buffer = new uint8_t**[3]; // (red/green/flash)
+    // for (uint8_t i=0; i<3; i++){
+    //     buffer[i]=new uint8_t*[rows];
+    //     for (uint16_t j=0; j<rows; j++) {
+    //         buffer[i][j]=new uint8_t[bufferwidth/8];
+    //     }
+    // }
+    //buffer = new uint8_t[3*rows*(bufferwidth/8)];
 
+};
 
 
 void prepareframes()
 {
-
 
 // When sending out data for a row, we are line selecting for the previous row
     uint8_t i,s;
@@ -132,7 +148,7 @@ void prepareframes()
                 framedata[f][i*rowlen+c*2+2]=(i & 0x07) | CLOCK ;
 
                 // add a pattern so we can test
-                if (s==c%rows && f==0){
+                if (s==c%rows && f==0){  //  - pattern only added to frame 0
                     if (s%2==1){ 
                         framedata[f][i*rowlen+c*2+1] |= (RED+GREEN);
                         framedata[f][i*rowlen+c*2+2] |= (RED+GREEN);
@@ -143,7 +159,7 @@ void prepareframes()
                 } 
 
                 // add a pattern so we can test
-                if (s==(c+8)%rows && f==0){
+                if (s==(c+8)%rows && f==0){   // - pattern only added to frame 0
                     if (s%2==1){ 
                         framedata[f][i*rowlen+c*2+1] |= (RED+GREEN);
                         framedata[f][i*rowlen+c*2+2] |= (RED+GREEN);
@@ -179,6 +195,7 @@ void dma_callback(Adafruit_ZeroDMA *dma) {
     DMA.resume();
 
 }
+
 
 void Hub08DMABegin()
 {
@@ -284,38 +301,6 @@ void Hub08DMABegin()
 }
 
 
-void fillframe(uint8_t frame, uint8_t buffer[])
-{
-    int i=0;
-    for (uint8_t r=0; r<rows; r++){
-        for (uint8_t byte=0; byte<(columns/8); byte++){
-            for (uint8_t bit=7; bit>=0; bit--){
-
-                // RED
-                if (buffer[r*(columns/8)+byte] & (1<<bit)) {
-                    framedata[frame][i] |= 0b01000000;  // set R bit to 1
-                    framedata[frame][i+1] |= 0b01000000;  // set R bit to 1
-                } else {
-                    framedata[frame][i] &= ~(0b01000000); // set R bit to 0
-                    framedata[frame][i+1] &= ~(0b01000000); // set R bit to 0
-                }
-
-                // GREEN
-                if (buffer[(rows*(columns/8))+r*(columns/8)+byte] & (1<<bit)) {
-                    framedata[frame][i] |= 0b10000000;      // set G bit to 1
-                    framedata[frame][i+1] |= 0b10000000;      // set G bit to 1
-                } else {
-                    framedata[frame][i] &= ~(0b10000000);   // set G bit to 0
-                    framedata[frame][i+1] &= ~(0b10000000);   // set G bit to 0
-                }
-                i+=2; 
-            }
-        }
-        i+=2; // pass over latches
-    }
-
-}
-
 void setliveframe(uint8_t setframe){
 
     uint32_t* alignedAddr = (uint32_t *)((uint32_t)(&framedata[setframe][0]) & ~3);
@@ -324,4 +309,206 @@ void setliveframe(uint8_t setframe){
     startAddrBot = (uint8_t *)alignedAddr;  
 
     framechanged=true; 
+}
+
+void setextent(uint16_t _extent){
+    //extent=_extent;
+}
+
+
+void buffertoframe(uint8_t frame){
+
+    bool red;
+    bool green;
+
+    for(uint8_t y=0; y<rows; y++){
+        for(uint16_t x=0;x<columns*displays; x++){
+
+            red=false;
+            green=false;
+
+            if((buffer[index(BUFRED,x,y)] & (0x80 >> (x%8)))!=0)        red=true;
+            if((buffer[index(BUFGREEN,x,y)] & (0x80 >> (x%8)))!=0)      green=true;
+            paintDirect(frame,x,y,red,green);
+            
+        }
+    }
+
+}
+
+void fillframe(uint8_t frame, uint16_t column){
+    
+    uint8_t fr;
+    uint16_t fc;
+
+    // Remember - rows numbered upwards from bottom, first bit out is right-hand side
+    for (uint8_t r=0; r<15; r++){
+        for (uint16_t c=column; c<column+(columns*displays); c++){  // c refers to the column in the buffer
+
+            fr=((15-r)-1)&0x0f;  // and the frame is stored 1-15, then 0
+            fc=(column+(columns*displays))-c;    // used for frame array and buffer referencing 
+
+            // deal with need for displays*columns worth of blanks at end of buffer first
+            if ((c<(columns*displays))||(c>(columns*displays))){
+                // set column to blank - red and green
+                framedata[frame][(fr*rowlen)+(fc*2)+1] &= ~(RED|GREEN); 
+                framedata[frame][(fr*rowlen)+(fc*2)+2] &= ~(RED|GREEN); 
+
+            } else {
+
+                //set column according to content of buffer array
+                
+                if (buffer[index(BUFRED,c,r)] & (0x80 >> (c%8))) {
+                    framedata[frame][(fr*rowlen)+(fc*2)+1] |= RED;
+                    framedata[frame][(fr*rowlen)+(fc*2)+2] |= RED;
+                } else {
+                    framedata[frame][(fr*rowlen)+(fc*2)+1] &= ~(RED); 
+                    framedata[frame][(fr*rowlen)+(fc*2)+2] &= ~(RED);                     
+                }
+                
+                if (buffer[index(BUFGREEN,c,r)] & (0x80 >> (c%8))) {
+                    framedata[frame][(fr*rowlen)+(fc*2)+1] |= GREEN;
+                    framedata[frame][(fr*rowlen)+(fc*2)+2] |= GREEN;
+                } else {
+                    framedata[frame][(fr*rowlen)+(fc*2)+1] &= ~(GREEN); 
+                    framedata[frame][(fr*rowlen)+(fc*2)+2] &= ~(GREEN);      
+                }               
+
+            }
+        }
+    }
+
+}
+
+void setPixel(uint16_t x, uint8_t y, bool red, bool green, bool flash){
+
+    if (red) {
+        buffer[index(BUFRED,x,y)] |= (0x80 >> (x%8));
+    } else {
+        buffer[index(BUFRED,x,y)] &= ~(0x80 >> (x%8));       
+    }
+
+    if (green) {
+        buffer[index(BUFGREEN,x,y)] |= (0x80 >> (x%8));
+    } else {
+        buffer[index(BUFGREEN,x,y)] &= ~(0x80 >> (x%8));        
+    }
+
+    // if (flash) {
+    //     buffer[index(BUFRED,x,y)] |= (0x80 >> (x%8));
+    // } else {
+    //     buffer[index(BUFRED,x,y)] &= ~(0x80 >> (x%8));        
+    // }
+
+}
+
+void TestPattern() {
+
+    for (uint8_t z=0; z<15; z++){
+
+        for (uint16_t x=0; x<14; x++){
+            if ((z%4)==1) {
+                setPixel(x,z,true,false,false);
+
+            }
+            if ((z%4)==2) {
+                setPixel(x,z,true,true,false);
+
+            }
+            if ((z%4)==3) {
+                setPixel(x,z,false,true,false);
+
+            }
+             if ((z%4)==0) {
+                setPixel(x,z,false,false,false);
+
+            }           
+        }
+
+    }
+
+}
+
+void clearBuffer(){
+
+    for(uint8_t c=0; c<3; c++){
+        for(uint8_t y=0; y<16; y++){
+            for(uint16_t x=0; x<bufferwidth/8; x++){
+                buffer[index(c,x,y)]=0;
+            }
+        }
+    }
+
+}
+
+uint16_t index(uint8_t colour, uint16_t x, uint8_t y){
+
+        return colour*rows*(bufferwidth/8) + y*(bufferwidth/8) + (x/8);
+}
+
+void paintDirect(uint8_t frame, uint16_t x, uint8_t y, bool red, bool green){
+
+    if (red) {
+        framedata[frame][(((15-y)-1)&0x0f)*rowlen + (127-x)*2 + 1] |=RED;
+        framedata[frame][(((15-y)-1)&0x0f)*rowlen + (127-x)*2 + 2] |=RED;
+    } else {
+        framedata[frame][(((15-y)-1)&0x0f)*rowlen + (127-x)*2 + 1] &=~(RED);
+        framedata[frame][(((15-y)-1)&0x0f)*rowlen + (127-x)*2 + 2] &=~(RED);
+    }
+
+    if (green) {
+        framedata[frame][(((15-y)-1)&0x0f)*rowlen + (127-x)*2 + 1] |=GREEN;
+        framedata[frame][(((15-y)-1)&0x0f)*rowlen + (127-x)*2 + 2] |=GREEN;
+    } else {
+        framedata[frame][(((15-y)-1)&0x0f)*rowlen + (127-x)*2 + 1] &=~(GREEN);
+        framedata[frame][(((15-y)-1)&0x0f)*rowlen + (127-x)*2 + 2] &=~(GREEN);
+    }
+
+
+}
+
+void renderText(string text, bool red, bool green){
+
+    uint16_t x=0;
+    uint8_t c=0; 
+    uint8_t ascii=0;
+    uint8_t findex=0;
+    bool skip=false;
+
+    while(c<text.length()){
+
+        skip=true;
+        ascii=static_cast<int>(text[c]);
+        if (ascii>=65 && ascii<=90){
+            skip=false;
+            findex=ascii-65;
+        }
+        if (ascii>=97 && ascii<=122) {
+            skip=false;
+            findex=ascii-97+26;
+        }
+        if (ascii>=48 && ascii<=57) {
+            skip=false;
+            findex=ascii-48+52;
+        }
+
+        if(!skip) {
+            for(uint8_t charcol=8-LUHeavy_Descriptors[findex].widthBits;charcol<8;charcol++){
+                if(x<displays*columns){
+                    for(uint8_t charrow=0;charrow<LUHeavy_FontInfo.heightPixels;charrow++){
+                        if((LUHeavy_Bitmaps[LUHeavy_Descriptors[findex].offset+charrow] & (0x80 >> charcol))!=0){
+                            setPixel(x,charrow+2,red,green,false);
+                        }
+
+                    }
+                    x++;
+                }
+            }
+            x++; // add a gap
+        }
+        if (ascii==32) x+=2;
+
+        c++;
+    }
+
 }
